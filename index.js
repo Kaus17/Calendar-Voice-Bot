@@ -1,31 +1,114 @@
+// server.js
+
+// Load environment variables from .env file FIRST
 require('dotenv').config(); 
 
 const express = require('express');
-const { parseCommand } = require('./llmParser');
 const path = require('path');
-// Import the functions from your new service module
+const cors = require('cors'); 
+const helmet = require('helmet'); 
+
+// Import all necessary functions from local service modules
 const { 
     getOAuth2Client, 
     setCalendarTokens, 
     isAuthenticated,
-    createCalendarEvent,
-    queryCalendarEvents,
+    createCalendarEvent, 
+    queryCalendarEvents, 
     SCOPES 
-} = require('./calendarService');
-const { parseCommand } = require('./llmParser'); // Import the LLM parser
+} = require('./calendarService'); 
+const { parseCommand } = require('./llmParser');
 
 const app = express();
-const PORT = 3000;
+const PORT = 8080;
 
-// Middleware and static file serving
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'frontend')));
+// =======================================================
+// 1. SECURITY AND MIDDLEWARE (CRITICAL ORDER)
+// =======================================================
 
+// A. Security Headers (Helmet must come before static files)
+// This configuration fixes the Cross-Origin-Opener-Policy issue with the OAuth popup.
+app.use(helmet({
+    contentSecurityPolicy: false,
+    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+}));
+
+// B. CORS: Allow requests from the frontend origin
+app.use(cors({ origin: 'http://localhost:8080' })); 
+
+// C. Parsing Middleware
+app.use(express.json()); 
+app.use(express.urlencoded({ extended: true })); 
+
+// =======================================================
+// 2. GOOGLE CALENDAR OAUTH 2.0 ROUTES
+// =======================================================
+
+// 1. Route to initiate the OAuth flow
+app.get('/api/auth/google', (req, res) => {
+    try {
+        const auth = getOAuth2Client();
+
+        // Generate the URL for the consent screen
+        const authUrl = auth.generateAuthUrl({
+            access_type: 'offline', // Requests a Refresh Token
+            scope: SCOPES,
+            prompt: 'consent' 
+        });
+
+        res.json({ authUrl });
+    } catch (error) {
+        console.error("Error starting OAuth flow:", error.message);
+        res.status(500).json({ error: "Authentication setup failed." });
+    }
+});
+
+// 2. Route to handle the callback from Google
+app.get('/oauth2callback', async (req, res) => {
+    const code = req.query.code;
+    if (!code) {
+        // Close window even on error to prevent indefinite loading
+        return res.status(400).send('<h1>Authorization Code Missing</h1><script>window.close();</script>');
+    }
+
+    try {
+        const auth = getOAuth2Client();
+        // Exchange the authorization code for access and refresh tokens
+        const { tokens } = await auth.getToken(code);
+        
+        // Save the tokens in the calendar service module
+        setCalendarTokens(tokens); 
+
+        // Send script to close the popup/tab
+        res.send('<h1>Authentication Successful!</h1><p>You can now close this window.</p><script>window.close();</script>');
+
+    } catch (error) {
+        console.error("Token exchange failed:", error.message);
+        res.status(500).send('<h1>Error</h1><p>Token exchange failed. Check server logs.</p><script>window.close();</script>');
+    }
+});
+
+// 3. Route to check authentication status (used by the frontend's checkAuthStatus)
+app.get('/api/auth/status', (req, res) => {
+    try {
+        const status = isAuthenticated(); 
+        // This is the correct final response
+        res.json({ authenticated: status }); 
+    } catch (error) {
+        console.error("Error in /api/auth/status:", error.message);
+        res.status(500).json({ 
+            authenticated: false, 
+            message: "Backend status check failed." 
+        });
+    }
+});
+
+// =======================================================
+// 3. MAIN COMMAND PROCESSING ROUTE
+// =======================================================
 
 app.post('/api/command', async (req, res) => {
     const { commandText } = req.body;
-
-    
 
     if (!isAuthenticated()) {
         return res.status(401).json({ 
@@ -37,15 +120,13 @@ app.post('/api/command', async (req, res) => {
     if (!commandText) {
         return res.status(400).json({ 
             status: 'error', 
-            message: "No voice command text received." 
+            message: "No voice command text received. Please try speaking again." 
         });
     }
 
     try {
         // Step 1: Use the LLM to parse the intent and details
         const parsedCommand = await parseCommand(commandText);
-        
-        // Response object to send back to the user
         let botResponse = {};
         
         // Step 2: Act based on the parsed intent
@@ -55,27 +136,29 @@ app.post('/api/command', async (req, res) => {
             // Step 3: Execute the Calendar API call
             const calendarResult = await createCalendarEvent(eventDetails);
 
-            // Step 4: Craft a natural language response
             botResponse = {
                 status: 'success',
-                // This is the spoken/displayed confirmation message
-                message: `Okay, I've successfully scheduled "${calendarResult.title}" on your calendar starting at ${new Date(calendarResult.start).toLocaleTimeString()}.`,
+                message: `Okay, I've successfully scheduled "${calendarResult.title}" on your calendar starting at ${new Date(calendarResult.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`,
                 data: calendarResult
             };
 
         } else if (parsedCommand.intent === 'QUERY_EVENTS') {
             const queryDetails = parsedCommand.queryDetails;
+
+            // Step 3: Execute the Calendar API query
             const summaryMessage = await queryCalendarEvents(queryDetails.targetDate);
+
             botResponse = {
                 status: 'success',
-                message: summaryMessage, // The summary is the message
+                message: summaryMessage,
                 data: queryDetails
             };
 
         } else {
+            // Unrecognized intent from LLM
             botResponse = {
                 status: 'error',
-                message: "I could not identify a valid calendar action (create or query) from your request. Please speak clearly.",
+                message: "I could not identify a valid calendar action (create or query) from your request. Please rephrase your command.",
                 data: parsedCommand
             };
         }
@@ -83,64 +166,32 @@ app.post('/api/command', async (req, res) => {
         res.json(botResponse);
 
     } catch (error) {
+        // Final safety net for all upstream errors (LLM or Calendar API)
         console.error("Command processing failed:", error.message);
+        
+        const userMessage = error.message.includes('authenticated') 
+            ? "Your calendar connection may have expired. Please try re-connecting your Google Calendar."
+            : `I hit an unexpected roadblock: ${error.message}`;
+        
         res.status(500).json({ 
             status: 'error', 
-            message: `A critical error occurred while processing your request: ${error.message}` 
+            message: userMessage
         });
     }
 });
 
-// Start the server
+// =======================================================
+// 4. STATIC FILE SERVING (MUST BE LAST)
+// =======================================================
+
+// Serve static files from the 'frontend' directory
+app.use(express.static(path.join(__dirname, 'frontend')));
+
+// =======================================================
+// 5. SERVER START
+// =======================================================
+
 app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
-});
-
-
-// --- 1. Route to Initiate Authentication ---
-app.get('/api/auth/google', (req, res) => {
-    try {
-        const auth = getOAuth2Client();
-        const authUrl = auth.generateAuthUrl({
-            access_type: 'offline', 
-            scope: SCOPES,
-            prompt: 'consent'
-        });
-        res.json({ authUrl });
-    } catch (error) {
-        console.error("Error starting OAuth flow:", error.message);
-        res.status(500).json({ error: "Authentication setup failed." });
-    }
-});
-
-// --- 2. Route to Handle the Callback ---
-app.get('/oauth2callback', async (req, res) => {
-    const code = req.query.code;
-    if (!code) {
-        return res.status(400).send('Authorization code missing.');
-    }
-
-    try {
-        const auth = getOAuth2Client();
-        const { tokens } = await auth.getToken(code);
-        
-        // Use the function from the service module to set the tokens
-        setCalendarTokens(tokens); 
-
-        // Send a success message and script to close the popup/tab
-        res.send('<h1>Authentication Successful!</h1><p>You can close this window and return to the voice bot.</p><script>window.close();</script>');
-    } catch (error) {
-        console.error("Error retrieving access tokens:", error.message);
-        res.status(500).send('Token exchange failed. Check server logs.');
-    }
-});
-
-// --- Optional: Check Authentication Status ---
-app.get('/api/auth/status', (req, res) => {
-    res.json({ authenticated: isAuthenticated() });
-});
-
-// Start the server
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`OAuth Redirect URI: ${process.env.GOOGLE_REDIRECT_URI}`);
 });
