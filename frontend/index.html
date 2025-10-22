@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Calendar Voice Bot</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; padding: 20px; background-color: #f4f7f9; }
+        .container { background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); width: 100%; max-width: 500px; }
+        h1 { color: #2c3e50; margin-bottom: 20px; }
+        button { padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-weight: bold; margin: 5px; transition: background-color 0.3s; }
+        #authButton { background-color: #3498db; color: white; }
+        #authButton:hover { background-color: #2980b9; }
+        #micButton { background-color: #e74c3c; color: white; font-size: 1.2em; padding: 15px; border-radius: 50%; width: 60px; height: 60px; line-height: 30px; }
+        #micButton.active { background-color: #2ecc71; }
+        #micButton:hover { opacity: 0.9; }
+        #status, #response { margin-top: 15px; padding: 10px; border-radius: 5px; border: 1px solid #ccc; min-height: 40px; background: #ecf0f1; }
+        #status { font-weight: bold; color: #f39c12; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎙️ Calendar Voice Bot MVP</h1>
+        
+        <p>1. **Authentication:** Connect your Google Calendar.</p>
+        <button id="authButton">Connect Calendar</button>
+        
+        <hr style="width: 100%; margin: 20px 0;">
+
+        <p>2. **Speak Command:** Click and speak (e.g., "Schedule a call with John tomorrow at 10 AM").</p>
+        <button id="micButton">🎤</button>
+        
+        <p id="status">Ready. Please click Connect Calendar.</p>
+
+        <p>3. **Bot Response:**</p>
+        <div id="response">Waiting for command...</div>
+    </div>
+
+    <script src="app.js"></script> 
+</body>
+</html>
