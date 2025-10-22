@@ -67,28 +67,20 @@ app.get('/api/auth/google', (req, res) => {
 app.get('/oauth2callback', async (req, res) => {
     const code = req.query.code;
     if (!code) {
-        // Close window even on error to prevent indefinite loading
-        return res.status(400).send('<h1>Authorization Code Missing</h1><script>window.close();</script>');
+        return res.status(400).send('<h1>Authorization Code Missing</h1>');
     }
 
     try {
         const auth = getOAuth2Client();
-        // Exchange the authorization code for access and refresh tokens
         const { tokens } = await auth.getToken(code);
-        
-        // Save the tokens in the calendar service module
-        setCalendarTokens(tokens); 
-
-        // Send script to close the popup/tab
-        res.send('<h1>Authentication Successful!</h1><p>You can now close this window.</p><script>window.close();</script>');
-
+        console.log('Tokens received and set:', tokens);
+        setCalendarTokens(tokens);
+        res.redirect('http://localhost:9000/?auth=success');
     } catch (error) {
         console.error("Token exchange failed:", error.message);
-        res.status(500).send('<h1>Error</h1><p>Token exchange failed. Check server logs.</p><script>window.close();</script>');
+        res.status(500).send('<h1>Error</h1><p>Token exchange failed. Check server logs.</p>');
     }
-    
 });
-
 // 3. Route to check authentication status (used by the frontend's checkAuthStatus)
 app.get('/api/auth/status', (req, res) => {
     try {
