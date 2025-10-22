@@ -1,0 +1,17 @@
+{
+  "name": "calendarbot",
+  "version": "1.0.0",
+  "description": "This is a project to create a bot to add/remove and review the meetings in Google Calendar",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@google/genai": "^1.26.0",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "googleapis": "^164.1.0"
+  }
+}
