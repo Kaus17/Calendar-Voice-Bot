@@ -184,6 +184,25 @@ async function queryCalendarEvents(targetDate) {
 }
 
 
+async function deleteCalendarEvent(eventId) {
+    try {
+        const calendar = getCalendarClient();
+        
+        const response = await calendar.events.delete({
+            calendarId: 'primary',
+            eventId: eventId,
+        });
+
+        return {
+            status: 'success',
+            message: 'Event deleted successfully.',
+        };
+    } catch (error) {
+        console.error("Error deleting calendar event:", error.message);
+        throw new Error(`Failed to delete event: ${error.message}`);
+    }
+}
+
 module.exports = {
     getOAuth2Client,
     setCalendarTokens,
@@ -191,5 +210,6 @@ module.exports = {
     isAuthenticated,
     createCalendarEvent,
     queryCalendarEvents,
+    deleteCalendarEvent, // Add this export
     SCOPES
 };

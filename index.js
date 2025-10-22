@@ -14,6 +14,7 @@ const {
     setCalendarTokens, 
     isAuthenticated,
     createCalendarEvent, 
+    deleteCalendarEvent,
     queryCalendarEvents, 
     SCOPES 
 } = require('./calendarService'); 
@@ -104,6 +105,7 @@ app.get('/api/auth/status', (req, res) => {
 // 3. MAIN COMMAND PROCESSING ROUTE
 // =======================================================
 
+// Update the /api/command route in index.js
 app.post('/api/command', async (req, res) => {
     const { commandText } = req.body;
 
@@ -122,58 +124,62 @@ app.post('/api/command', async (req, res) => {
     }
 
     try {
-        // Step 1: Use the LLM to parse the intent and details
-        const parsedCommand = await parseCommand(commandText);
+        let parsedCommand = await parseCommand(commandText);
         let botResponse = {};
-        
-        // Step 2: Act based on the parsed intent
+        let context = [];
+
+        // Pre-fetch context for DELETE_EVENT if details are provided
+        if (parsedCommand.intent === 'DELETE_EVENT' && (!parsedCommand.deleteDetails.eventId || !parsedCommand.deleteDetails.title)) {
+            const queryDate = parsedCommand.deleteDetails.date || new Date().toISOString().split('T')[0];
+            const queryResult = await queryCalendarEvents(queryDate);
+            context = queryResult.data?.items || [];
+            if (parsedCommand.useLocalFallback && context.length > 0) {
+                parsedCommand = parseCommandLocally(commandText, context); // Re-parse locally with context
+            }
+        }
+
         if (parsedCommand.intent === 'CREATE_EVENT') {
             const eventDetails = parsedCommand.eventDetails;
-            
-            // Step 3: Execute the Calendar API call
             const calendarResult = await createCalendarEvent(eventDetails);
-
             botResponse = {
                 status: 'success',
-                message: `Okay, I've successfully scheduled "${calendarResult.title}" on your calendar starting at ${new Date(calendarResult.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`,
+                message: `Okay, I've scheduled "${calendarResult.title}" starting at ${new Date(calendarResult.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`,
                 data: calendarResult
             };
-
         } else if (parsedCommand.intent === 'QUERY_EVENTS') {
             const queryDetails = parsedCommand.queryDetails;
-
-            // Step 3: Execute the Calendar API query
             const summaryMessage = await queryCalendarEvents(queryDetails.targetDate);
-
             botResponse = {
                 status: 'success',
                 message: summaryMessage,
                 data: queryDetails
             };
-
+        } else if (parsedCommand.intent === 'DELETE_EVENT') {
+            const deleteDetails = parsedCommand.deleteDetails;
+            if (!deleteDetails.eventId) {
+                throw new Error('No matching event found or event ID not provided.');
+            }
+            await deleteCalendarEvent(deleteDetails);
+            botResponse = {
+                status: 'success',
+                message: 'The event has been deleted from your calendar.',
+                data: deleteDetails
+            };
         } else {
-            // Unrecognized intent from LLM
             botResponse = {
                 status: 'error',
-                message: "I could not identify a valid calendar action (create or query) from your request. Please rephrase your command.",
+                message: "I could not identify a valid calendar action. Please rephrase your command.",
                 data: parsedCommand
             };
         }
 
         res.json(botResponse);
-
     } catch (error) {
-        // Final safety net for all upstream errors (LLM or Calendar API)
         console.error("Command processing failed:", error.message);
-        
-        const userMessage = error.message.includes('authenticated') 
-            ? "Your calendar connection may have expired. Please try re-connecting your Google Calendar."
-            : `I hit an unexpected roadblock: ${error.message}`;
-        
-        res.status(500).json({ 
-            status: 'error', 
-            message: userMessage
-        });
+        const userMessage = error.message.includes('authenticated')
+            ? "Your calendar connection may have expired. Please reconnect."
+            : `Error: ${error.message}`;
+        res.status(500).json({ status: 'error', message: userMessage });
     }
 });
 
