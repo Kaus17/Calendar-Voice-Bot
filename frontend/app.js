@@ -148,7 +148,7 @@ authButton.addEventListener('click', async () => {
         updateStatus('Authentication window opened. **It should close automatically** after granting permission. Please click the green button to finish synchronizing.');        
         // Note: We remove the complex polling logic and rely on the user's click
         
-    } catch (e) {
+    } catch (e) {   
         updateStatus('Failed to start authentication.', true);
         authButton.style.display = 'block'; // Show original button on failure
     }

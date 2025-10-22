@@ -1,11 +1,22 @@
-// src/calendarService.js
-
+let calendarTokens = null; 
+// The google object is also required
 const { google } = require('googleapis');
 
-// State managed internally by this module
-let calendarTokens = null; 
-
 const SCOPES = ['https://www.googleapis.com/auth/calendar.events'];
+
+function setCalendarTokens(tokens) {
+    calendarTokens = tokens;
+    console.log("Calendar tokens successfully set.");
+}
+
+
+/**
+ * Checks if the user is authenticated (if tokens are present).
+ */
+function isAuthenticated() {
+    return !!calendarTokens;
+}
+
 
 /**
  * Initializes and returns the OAuth2 client using ENV variables.
@@ -30,17 +41,9 @@ function getOAuth2Client() {
  * Stores the tokens received from Google after a successful callback.
  * @param {object} tokens - The tokens object including access_token and refresh_token.
  */
-function setCalendarTokens(tokens) {
-    calendarTokens = tokens;
-    console.log("Calendar tokens successfully set.");
-}
 
-/**
- * Checks if the user is authenticated (if tokens are present).
- */
-function isAuthenticated() {
-    return !!calendarTokens;
-}
+
+
 
 /**
  * Returns the Google Calendar client ready for API calls.
@@ -49,7 +52,7 @@ function isAuthenticated() {
  */
 function getCalendarClient() {
     if (!calendarTokens) {
-        throw new Error("User is not authenticated. Please complete the OAuth flow.");
+        throw new Error('User not authenticated. Calendar tokens are missing.');
     }
     
     const auth = getOAuth2Client();

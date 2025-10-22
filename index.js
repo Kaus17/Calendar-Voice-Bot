@@ -20,7 +20,7 @@ const {
 const { parseCommand } = require('./llmParser');
 
 const app = express();
-const PORT = 8080;
+const PORT = 9000;
 
 // =======================================================
 // 1. SECURITY AND MIDDLEWARE (CRITICAL ORDER)
@@ -34,7 +34,7 @@ app.use(helmet({
 }));
 
 // B. CORS: Allow requests from the frontend origin
-app.use(cors({ origin: 'http://localhost:8080' })); 
+app.use(cors({ origin: 'http://localhost:9000' })); 
 
 // C. Parsing Middleware
 app.use(express.json()); 
@@ -86,6 +86,7 @@ app.get('/oauth2callback', async (req, res) => {
         console.error("Token exchange failed:", error.message);
         res.status(500).send('<h1>Error</h1><p>Token exchange failed. Check server logs.</p><script>window.close();</script>');
     }
+    
 });
 
 // 3. Route to check authentication status (used by the frontend's checkAuthStatus)
@@ -99,6 +100,10 @@ app.get('/api/auth/status', (req, res) => {
         res.status(500).json({ 
             authenticated: false, 
             message: "Backend status check failed." 
+        });
+        res.status(308).json({ 
+            authenticated: true, 
+            message: "object Not Modified" 
         });
     }
 });
