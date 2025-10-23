@@ -99,13 +99,19 @@ app.post('/api/command', async (req, res) => {
             const modifyDetails = parsedCommand.modifyDetails;
             const targetDate = modifyDetails.date || new Date().toISOString().split('T')[0];
             const queryResult = await queryCalendarEvents(targetDate, modifyDetails.eventName);
-            const matchingEvent = queryResult.events.find(e => e.title.toLowerCase().includes(modifyDetails.eventName.toLowerCase()));
+            const matchingEvents = queryResult.events.filter(e => e.title.toLowerCase().includes(modifyDetails.eventName.toLowerCase()));
 
-            if (!matchingEvent) {
+            if (matchingEvents.length === 0) {
                 botResponse = {
                     status: 'error',
                     message: `No event found matching '${modifyDetails.eventName}' on ${new Date(targetDate).toDateString()}.`,
                     data: null
+                };
+            } else if (matchingEvents.length > 1) {
+                botResponse = {
+                    status: 'clarification',
+                    message: `Multiple events match '${modifyDetails.eventName}' on ${new Date(targetDate).toDateString()}. Please specify by saying 'modify event with ID [ID]' for one of these: ${matchingEvents.map(e => `${e.title} at ${e.startTime} (ID: ${e.id})`).join(', ')}.`,
+                    data: { options: matchingEvents }
                 };
             } else {
                 const updateDetails = {};
@@ -114,10 +120,10 @@ app.post('/api/command', async (req, res) => {
                 if (modifyDetails.description) updateDetails.description = modifyDetails.description;
                 if (modifyDetails.date) updateDetails.date = modifyDetails.date;
 
-                await modifyCalendarEvent(matchingEvent.id, updateDetails);
+                await modifyCalendarEvent(matchingEvents[0].id, updateDetails);
                 botResponse = {
                     status: 'success',
-                    message: `Modified '${matchingEvent.title}' on ${new Date(targetDate).toDateString()}.`,
+                    message: `Modified '${matchingEvents[0].title}' on ${new Date(targetDate).toDateString()}.`,
                     data: null
                 };
             }
