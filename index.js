@@ -11,6 +11,7 @@ const {
     isAuthenticated,
     createCalendarEvent, 
     queryCalendarEvents,
+    modifyCalendarEvent,
     SCOPES 
 } = require('./calendarService');
 
@@ -94,16 +95,42 @@ app.post('/api/command', async (req, res) => {
                 message: queryResult.message,
                 data: queryResult.events
             };
+        } else if (parsedCommand.intent === 'MODIFY_EVENT') {
+            const modifyDetails = parsedCommand.modifyDetails;
+            const targetDate = modifyDetails.date || new Date().toISOString().split('T')[0];
+            const queryResult = await queryCalendarEvents(targetDate, modifyDetails.eventName);
+            const matchingEvent = queryResult.events.find(e => e.title.toLowerCase().includes(modifyDetails.eventName.toLowerCase()));
+
+            if (!matchingEvent) {
+                botResponse = {
+                    status: 'error',
+                    message: `No event found matching '${modifyDetails.eventName}' on ${new Date(targetDate).toDateString()}.`,
+                    data: null
+                };
+            } else {
+                const updateDetails = {};
+                if (modifyDetails.startTime) updateDetails.startTime = modifyDetails.startTime;
+                if (modifyDetails.endTime) updateDetails.endTime = modifyDetails.endTime;
+                if (modifyDetails.description) updateDetails.description = modifyDetails.description;
+                if (modifyDetails.date) updateDetails.date = modifyDetails.date;
+
+                await modifyCalendarEvent(matchingEvent.id, updateDetails);
+                botResponse = {
+                    status: 'success',
+                    message: `Modified '${matchingEvent.title}' on ${new Date(targetDate).toDateString()}.`,
+                    data: null
+                };
+            }
         } else if (parsedCommand.useLocalFallback) {
             botResponse = {
                 status: 'error',
-                message: 'LLM unavailable. Please use phrases like "schedule a meeting today at 3 PM" or "what’s on my calendar for tomorrow."',
+                message: 'LLM unavailable. Please use phrases like "schedule a meeting today at 3 PM", "what’s on my calendar for tomorrow", or "modify the team meeting to start at 4 PM."',
                 data: null
             };
         } else {
             botResponse = {
                 status: 'error',
-                message: "I didn’t understand that. Try 'schedule a meeting' or 'what’s on my calendar.'",
+                message: "I didn’t understand that. Try 'schedule a meeting', 'what’s on my calendar', or 'modify the team meeting.'",
                 data: parsedCommand
             };
         }

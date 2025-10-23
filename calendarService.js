@@ -69,7 +69,7 @@ async function createCalendarEvent(details) {
     }
 }
 
-async function queryCalendarEvents(targetDate) {
+async function queryCalendarEvents(targetDate, eventName = null) {
     try {
         const calendar = getCalendarClient();
         const timeMin = new Date(`${targetDate}T00:00:00Z`).toISOString();
@@ -82,11 +82,12 @@ async function queryCalendarEvents(targetDate) {
             maxResults: 10,
             singleEvents: true,
             orderBy: 'startTime',
+            q: eventName, // Search by event name if provided
         });
 
         const events = response.data.items || [];
         if (events.length === 0) {
-            return { status: 'success', message: `No events found on ${new Date(targetDate).toDateString()}. You are free!`, events: [] };
+            return { status: 'success', message: `No events found on ${new Date(targetDate).toDateString()} matching '${eventName || 'any'}'. You are free!`, events: [] };
         }
 
         let summary = `On ${new Date(targetDate).toDateString()}, you have ${events.length} events:\n`;
@@ -95,12 +96,37 @@ async function queryCalendarEvents(targetDate) {
             const startTime = new Date(start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
             const eventInfo = `${index + 1}. ${event.summary} at ${startTime}`;
             summary += `${eventInfo}\n`;
-            return { title: event.summary, startTime, date: targetDate };
+            return { id: event.id, title: event.summary, startTime, date: targetDate, startDateTime: start };
         });
         return { status: 'success', message: summary, events: eventList };
     } catch (error) {
         console.error("Error querying calendar events:", error.message);
         throw new Error(`Failed to query events: ${error.message}`);
+    }
+}
+
+async function modifyCalendarEvent(eventId, details) {
+    try {
+        const calendar = getCalendarClient();
+        const event = await calendar.events.get({ calendarId: 'primary', eventId });
+        const updatedEvent = { ...event.data };
+
+        const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+        if (details.date || details.startTime) {
+            const startDateTime = `${details.date || new Date(updatedEvent.start.dateTime).toISOString().split('T')[0]}T${details.startTime || new Date(updatedEvent.start.dateTime).toISOString().split('T')[1].slice(0, 8)}`;
+            updatedEvent.start = { dateTime: startDateTime, timeZone };
+        }
+        if (details.endTime) {
+            const endDateTime = `${details.date || new Date(updatedEvent.end.dateTime).toISOString().split('T')[0]}T${details.endTime}`;
+            updatedEvent.end = { dateTime: endDateTime, timeZone };
+        }
+        if (details.description) updatedEvent.description = details.description;
+
+        await calendar.events.update({ calendarId: 'primary', eventId, resource: updatedEvent });
+        return { status: 'success', message: 'Event modified successfully.' };
+    } catch (error) {
+        console.error("Error modifying calendar event:", error.message);
+        throw new Error(`Failed to modify event: ${error.message}`);
     }
 }
 
@@ -111,5 +137,6 @@ module.exports = {
     isAuthenticated,
     createCalendarEvent,
     queryCalendarEvents,
+    modifyCalendarEvent,
     SCOPES
 };

@@ -9,8 +9,8 @@ const calendarSchema = {
     properties: {
         intent: {
             type: Type.STRING,
-            description: "The user's intent: 'CREATE_EVENT' to schedule an event or 'QUERY_EVENTS' to ask about the schedule.",
-            enum: ['CREATE_EVENT', 'QUERY_EVENTS']
+            description: "The user's intent: 'CREATE_EVENT' to schedule an event, 'QUERY_EVENTS' to ask about the schedule, or 'MODIFY_EVENT' to change an existing event.",
+            enum: ['CREATE_EVENT', 'QUERY_EVENTS', 'MODIFY_EVENT']
         },
         eventDetails: {
             type: Type.OBJECT,
@@ -32,6 +32,18 @@ const calendarSchema = {
             },
             required: ['targetDate']
         },
+        modifyDetails: {
+            type: Type.OBJECT,
+            description: "Details required for modifying an existing event.",
+            properties: {
+                eventName: { type: Type.STRING, description: "The name/title of the event to modify." },
+                date: { type: Type.STRING, description: "The specific date in YYYY-MM-DD format (optional)." },
+                startTime: { type: Type.STRING, description: "The new starting time in 24-hour format (optional)." },
+                endTime: { type: Type.STRING, description: "The new ending time in 24-hour format (optional)." },
+                description: { type: Type.STRING, description: "The new description (optional)." }
+            },
+            required: ['eventName']
+        },
         useLocalFallback: {
             type: Type.BOOLEAN,
             description: "Flag to indicate if local fallback parsing should be used due to API failure."
@@ -46,7 +58,7 @@ const calendarSchema = {
  */
 async function parseCommand(commandText) {
     const currentDate = new Date().toISOString().split('T')[0];
-    const systemInstruction = `You are a helpful AI assistant for calendar management. The current date is ${currentDate}. Analyze the request (${commandText}) and output a JSON object following the schema. Interpret natural language: for CREATE_EVENT, extract 'title', 'date' (e.g., 'today', 'tomorrow', 'next Monday'), 'startTime', and optionally 'endTime' and 'description'. For QUERY_EVENTS, extract 'targetDate' from phrases like 'what’s on my calendar for today' or 'show me tomorrow’s schedule'. Resolve relative dates and times into YYYY-MM-DD and HH:MM:SS formats. Set 'useLocalFallback' to false unless the API fails.`;
+    const systemInstruction = `You are a helpful AI assistant for calendar management. The current date is ${currentDate}. Analyze the request (${commandText}) and output a JSON object following the schema. Interpret natural language: for CREATE_EVENT, extract 'title', 'date' (e.g., 'today', 'tomorrow', 'next Monday'), 'startTime', and optionally 'endTime' and 'description'. For QUERY_EVENTS, extract 'targetDate' from phrases like 'what’s on my calendar for today'. For MODIFY_EVENT, extract 'eventName' and optional updates to 'date', 'startTime', 'endTime', or 'description' from phrases like 'modify the team meeting to start at 4 PM'. Resolve relative dates and times into YYYY-MM-DD and HH:MM:SS formats. Set 'useLocalFallback' to false unless the API fails.`;
 
     try {
         const response = await ai.models.generateContent({
@@ -75,7 +87,6 @@ function parseCommandLocally(commandText) {
     const lowerCommand = commandText.toLowerCase();
     let result = { useLocalFallback: true };
 
-    // Detect intent and extract details
     if (lowerCommand.includes('schedule') || lowerCommand.includes('create') || lowerCommand.includes('set up')) {
         result.intent = 'CREATE_EVENT';
         const titleMatch = commandText.match(/(schedule|create|set up)\s+(.+?)(?:\s+for|\s+at)/i);
@@ -88,7 +99,7 @@ function parseCommandLocally(commandText) {
             result.eventDetails = {
                 title: titleMatch[2].trim(),
                 date: resolveDate(dateMatch[1]),
-                startTime: timeMatch ? convertTo24Hour(timeMatch[1]) : '09:00:00', // Default to 9 AM if no time
+                startTime: timeMatch ? convertTo24Hour(timeMatch[1]) : '09:00:00',
                 endTime: endTimeMatch ? convertTo24Hour(endTimeMatch[1]) : null,
                 description: descMatch ? descMatch[1].trim() : null
             };
@@ -97,6 +108,21 @@ function parseCommandLocally(commandText) {
         result.intent = 'QUERY_EVENTS';
         const dateMatch = commandText.match(/\bfor\s+(today|tomorrow|next\s+monday|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/i);
         if (dateMatch) result.queryDetails = { targetDate: resolveDate(dateMatch[1]) };
+    } else if (lowerCommand.includes('modify') || lowerCommand.includes('change') || lowerCommand.includes('update')) {
+        result.intent = 'MODIFY_EVENT';
+        const nameMatch = commandText.match(/(modify|change|update)\s+the\s+(.+?)(?:\s+to|\s+at)/i);
+        const dateMatch = commandText.match(/\b(on|for)\s+(today|tomorrow|next\s+monday|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\b/i);
+        const startTimeMatch = commandText.match(/to\s+start\s+at\s+(\d{1,2}:\d{2}(?:\s?(?:am|pm))?)/i);
+        const endTimeMatch = commandText.match(/to\s+end\s+at\s+(\d{1,2}:\d{2}(?:\s?(?:am|pm))?)/i);
+        const descMatch = commandText.match(/with\s+description\s+(.+?)(?:\s+at|\s+to|$)/i);
+
+        if (nameMatch) {
+            result.modifyDetails = { eventName: nameMatch[2].trim() };
+            if (dateMatch) result.modifyDetails.date = resolveDate(dateMatch[2]);
+            if (startTimeMatch) result.modifyDetails.startTime = convertTo24Hour(startTimeMatch[1]);
+            if (endTimeMatch) result.modifyDetails.endTime = convertTo24Hour(endTimeMatch[1]);
+            if (descMatch) result.modifyDetails.description = descMatch[1].trim();
+        }
     }
 
     return result;
