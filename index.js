@@ -1,70 +1,39 @@
-// server.js
+// index.js
 
-// Load environment variables from .env file FIRST
-require('dotenv').config(); 
-
+require('dotenv').config();
 const express = require('express');
 const path = require('path');
-const cors = require('cors'); 
-const helmet = require('helmet'); 
-
-// Import all necessary functions from local service modules
+const { google } = require('googleapis');
+const { parseCommand } = require('./llmParser');
 const { 
     getOAuth2Client, 
     setCalendarTokens, 
     isAuthenticated,
     createCalendarEvent, 
-    deleteCalendarEvent,
-    queryCalendarEvents, 
+    queryCalendarEvents,
     SCOPES 
-} = require('./calendarService'); 
-const { parseCommand } = require('./llmParser');
+} = require('./calendarService');
 
 const app = express();
-const PORT = 9000;
 
-// =======================================================
-// 1. SECURITY AND MIDDLEWARE (CRITICAL ORDER)
-// =======================================================
+// Serve static files from the 'frontend' directory
+app.use(express.static(path.join(__dirname, 'frontend')));
+app.use(express.json());
 
-// A. Security Headers (Helmet must come before static files)
-// This configuration fixes the Cross-Origin-Opener-Policy issue with the OAuth popup.
-app.use(helmet({
-    contentSecurityPolicy: false,
-    crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
-}));
+const PORT = process.env.PORT || 9000;
 
-// B. CORS: Allow requests from the frontend origin
-app.use(cors({ origin: 'http://localhost:9000' })); 
-
-// C. Parsing Middleware
-app.use(express.json()); 
-app.use(express.urlencoded({ extended: true })); 
-
-// =======================================================
-// 2. GOOGLE CALENDAR OAUTH 2.0 ROUTES
-// =======================================================
-
-// 1. Route to initiate the OAuth flow
-app.get('/api/auth/google', (req, res) => {
-    try {
-        const auth = getOAuth2Client();
-
-        // Generate the URL for the consent screen
-        const authUrl = auth.generateAuthUrl({
-            access_type: 'offline', // Requests a Refresh Token
-            scope: SCOPES,
-            prompt: 'consent' 
-        });
-
-        res.json({ authUrl });
-    } catch (error) {
-        console.error("Error starting OAuth flow:", error.message);
-        res.status(500).json({ error: "Authentication setup failed." });
-    }
+// Serve index.html from the 'frontend' directory for the root route
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'frontend', 'index.html'));
 });
 
-// 2. Route to handle the callback from Google
+// OAuth2 Setup
+app.get('/api/auth/google', (req, res) => {
+    const auth = getOAuth2Client();
+    const authUrl = auth.generateAuthUrl({ scope: SCOPES, access_type: 'offline' });
+    res.json({ authUrl });
+});
+
 app.get('/oauth2callback', async (req, res) => {
     const code = req.query.code;
     if (!code) {
@@ -82,30 +51,12 @@ app.get('/oauth2callback', async (req, res) => {
         res.status(500).send('<h1>Error</h1><p>Token exchange failed. Check server logs.</p>');
     }
 });
-// 3. Route to check authentication status (used by the frontend's checkAuthStatus)
+
 app.get('/api/auth/status', (req, res) => {
-    try {
-        const status = isAuthenticated(); 
-        // This is the correct final response
-        res.json({ authenticated: status }); 
-    } catch (error) {
-        console.error("Error in /api/auth/status:", error.message);
-        res.status(500).json({ 
-            authenticated: false, 
-            message: "Backend status check failed." 
-        });
-        res.status(308).json({ 
-            authenticated: true, 
-            message: "object Not Modified" 
-        });
-    }
+    res.json({ authenticated: isAuthenticated() });
 });
 
-// =======================================================
-// 3. MAIN COMMAND PROCESSING ROUTE
-// =======================================================
-
-// Update the /api/command route in index.js
+// Command Processing
 app.post('/api/command', async (req, res) => {
     const { commandText } = req.body;
 
@@ -124,19 +75,8 @@ app.post('/api/command', async (req, res) => {
     }
 
     try {
-        let parsedCommand = await parseCommand(commandText);
+        const parsedCommand = await parseCommand(commandText);
         let botResponse = {};
-        let context = [];
-
-        // Pre-fetch context for DELETE_EVENT if details are provided
-        if (parsedCommand.intent === 'DELETE_EVENT' && (!parsedCommand.deleteDetails.eventId || !parsedCommand.deleteDetails.title)) {
-            const queryDate = parsedCommand.deleteDetails.date || new Date().toISOString().split('T')[0];
-            const queryResult = await queryCalendarEvents(queryDate);
-            context = queryResult.data?.items || [];
-            if (parsedCommand.useLocalFallback && context.length > 0) {
-                parsedCommand = parseCommandLocally(commandText, context); // Re-parse locally with context
-            }
-        }
 
         if (parsedCommand.intent === 'CREATE_EVENT') {
             const eventDetails = parsedCommand.eventDetails;
@@ -148,27 +88,22 @@ app.post('/api/command', async (req, res) => {
             };
         } else if (parsedCommand.intent === 'QUERY_EVENTS') {
             const queryDetails = parsedCommand.queryDetails;
-            const summaryMessage = await queryCalendarEvents(queryDetails.targetDate);
+            const queryResult = await queryCalendarEvents(queryDetails.targetDate);
             botResponse = {
                 status: 'success',
-                message: summaryMessage,
-                data: queryDetails
+                message: queryResult.message,
+                data: queryResult.events
             };
-        } else if (parsedCommand.intent === 'DELETE_EVENT') {
-            const deleteDetails = parsedCommand.deleteDetails;
-            if (!deleteDetails.eventId) {
-                throw new Error('No matching event found or event ID not provided.');
-            }
-            await deleteCalendarEvent(deleteDetails);
+        } else if (parsedCommand.useLocalFallback) {
             botResponse = {
-                status: 'success',
-                message: 'The event has been deleted from your calendar.',
-                data: deleteDetails
+                status: 'error',
+                message: 'LLM unavailable. Please use phrases like "schedule a meeting today at 3 PM" or "what’s on my calendar for tomorrow."',
+                data: null
             };
         } else {
             botResponse = {
                 status: 'error',
-                message: "I could not identify a valid calendar action. Please rephrase your command.",
+                message: "I didn’t understand that. Try 'schedule a meeting' or 'what’s on my calendar.'",
                 data: parsedCommand
             };
         }
@@ -183,18 +118,6 @@ app.post('/api/command', async (req, res) => {
     }
 });
 
-// =======================================================
-// 4. STATIC FILE SERVING (MUST BE LAST)
-// =======================================================
-
-// Serve static files from the 'frontend' directory
-app.use(express.static(path.join(__dirname, 'frontend')));
-
-// =======================================================
-// 5. SERVER START
-// =======================================================
-
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`OAuth Redirect URI: ${process.env.GOOGLE_REDIRECT_URI}`);
+    console.log(`Server running on port ${PORT}`);
 });

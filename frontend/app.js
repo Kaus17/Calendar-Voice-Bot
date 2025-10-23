@@ -1,4 +1,5 @@
-// frontend/app.js
+// app.js
+
 const authButton = document.getElementById('authButton');
 const micButton = document.getElementById('micButton');
 const statusDiv = document.getElementById('status');
@@ -7,7 +8,6 @@ const statusCheckButton = document.getElementById('statusCheckButton');
 
 let isAuth = false;
 
-// --- Utility Functions ---
 function updateStatus(message, isError = false) {
     statusDiv.textContent = message;
     statusDiv.style.color = isError ? '#e74c3c' : '#3498db';
@@ -23,8 +23,6 @@ function speakResponse(text) {
         utterance.lang = 'en-US';
         utterance.rate = 1.0;
         window.speechSynthesis.speak(utterance);
-    } else {
-        console.warn('Text-to-Speech not supported in this browser.');
     }
 }
 
@@ -72,33 +70,27 @@ async function checkAuthStatus() {
     }
 }
 
-// --- Authentication Flow (Redirect-Based) ---
 authButton.addEventListener('click', async () => {
     try {
         const res = await fetch('/api/auth/google');
         const data = await res.json();
-        window.location.href = data.authUrl; // Redirect the entire page to the OAuth flow
+        window.location.href = data.authUrl;
     } catch (e) {
         updateStatus('Failed to start authentication.', true);
         authButton.style.display = 'block';
     }
 });
 
-// --- Handle Page Load and Redirect ---
 window.addEventListener('load', () => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('auth') === 'success') {
         checkAuthStatus();
-        window.history.replaceState({}, document.title, window.location.pathname); // Clear URL param
+        window.history.replaceState({}, document.title, window.location.pathname);
     } else {
-        checkAuthStatus(); // Check status on initial load
+        checkAuthStatus();
     }
 });
 
-// Remove statusCheckButton listener since redirect handles the flow
-// statusCheckButton.addEventListener('click', checkAuthStatus); // Commented out
-
-// --- Speech-to-Text Integration ---
 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 if (SpeechRecognition) {
@@ -120,13 +112,37 @@ if (SpeechRecognition) {
         recognition.start();
     });
 
-    recognition.onresult = (event) => {
+    recognition.onresult = async (event) => {
         const commandText = event.results[0][0].transcript;
         updateStatus(`Heard: "${commandText}"`, false);
         micButton.classList.remove('active');
         micButton.textContent = '🧠';
         
-        processCommand(commandText);
+        try {
+            const res = await fetch('/api/command', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ commandText })
+            });
+
+            const data = await res.json();
+
+            if (data.status === 'success') {
+                updateStatus('Command executed successfully!', false);
+                updateResponse(`<p style="color: green;">Bot: ${data.message}</p>`);
+                speakResponse(data.message);
+            } else {
+                updateStatus('Command failed.', true);
+                updateResponse(`<p style="color: red;">Bot: ${data.message}</p>`);
+                speakResponse(data.message);
+            }
+        } catch (e) {
+            updateStatus('Network or server connection failed.', true);
+            updateResponse(`<p style="color: red;">Network Error: Could not connect to the backend.</p>`);
+            console.error('Fetch error:', e);
+        } finally {
+            micButton.textContent = '🎤';
+        }
     };
 
     recognition.onspeechend = () => {
@@ -142,34 +158,4 @@ if (SpeechRecognition) {
 } else {
     updateStatus('Speech Recognition not supported in this browser. Please use Chrome/Edge.', true);
     micButton.disabled = true;
-}
-
-// --- Command Processing ---
-async function processCommand(commandText) {
-    updateResponse('Processing command with LLM and Calendar API...');
-    try {
-        const res = await fetch('/api/command', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ commandText })
-        });
-
-        const data = await res.json();
-
-        if (data.status === 'success') {
-            updateStatus('Command executed successfully!', false);
-            updateResponse(`<p style="color: green;">Bot: ${data.message}</p>`);
-            speakResponse(data.message);
-        } else {
-            updateStatus('Command failed.', true);
-            updateResponse(`<p style="color: red;">Bot: ${data.message}</p>`);
-            speakResponse(data.message);
-        }
-    } catch (e) {
-        updateStatus('Network or server connection failed.', true);
-        updateResponse(`<p style="color: red;">Network Error: Could not connect to the backend.</p>`);
-        console.error('Fetch error:', e);
-    } finally {
-        micButton.textContent = '🎤';
-    }
 }
