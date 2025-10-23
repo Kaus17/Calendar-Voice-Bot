@@ -28,11 +28,12 @@ npm install
 
 ### 3. Set Up Environment Variables
 Create a .env file in the root directory with the following variables:
+```text
 GOOGLE_CLIENT_ID=your-google-client-id
 GOOGLE_CLIENT_SECRET=your-google-client-secret
 GOOGLE_REDIRECT_URI=http://localhost:9000/oauth2callback
 GEMINI_API_KEY=your-gemini-api-key
-PORT=9000
+```
 - Obtain GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET from the Google Cloud Console after setting up OAuth 2.0 credentials.
 - Get GEMINI_API_KEY from the Google AI Studio or your Gemini API provider.
 - GOOGLE_REDIRECT_URI should match the callback URL used in Google Cloud Console (e.g., http://localhost:9000/oauth2callback).
