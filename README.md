@@ -39,14 +39,16 @@ PORT=9000
 
 ### 4. Directory Structure
 Ensure the following structure:
+```text
 calendar-voice-bot/
-  |-- frontend/
-  |   |-- index.html
-  |   |-- app.js
-  |-- calendarService.js
-  |-- index.js
-  |-- llmParser.js
-  |-- .env
+├── frontend/
+│   ├── index.html
+│   ├── app.js
+├── calendarService.js
+├── index.js
+├── llmParser.js
+└── .env
+```
 
 ## Usage
 
