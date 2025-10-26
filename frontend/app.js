@@ -135,7 +135,7 @@ if (SpeechRecognition) {
                 updateStatus('Clarification needed:', false);
                 updateResponse(`<p>Bot: ${data.message}</p>`);
                 speakResponse(data.message);
-                await listenForClarification(data.data.options);
+                await listenForClarification(data.data.options, data.message.includes('time range') ? 'timeRange' : null);
             } else {
                 updateStatus('Command failed.', true);
                 updateResponse(`<p style="color: red;">Bot: ${data.message}</p>`);
@@ -150,50 +150,78 @@ if (SpeechRecognition) {
         }
     };
 
-    async function listenForClarification(options) {
-        updateStatus('Please specify the event by saying "modify event with ID [ID]".', false);
-        recognition.start();
-
-        recognition.onresult = async (event) => {
-            const clarificationText = event.results[0][0].transcript;
-            recognition.stop();
-            updateStatus(`Heard: "${clarificationText}"`, false);
-
-            const idMatch = clarificationText.match(/modify event with ID (\w+)/i);
-            if (idMatch) {
-                const selectedId = idMatch[1];
-                const selectedEvent = options.find(option => option.id === selectedId);
-
-                if (selectedEvent) {
-                    try {
-                        const res = await fetch('/api/command', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ commandText: `modify ${selectedEvent.title} with ID ${selectedId}` })
-                        });
-
-                        const data = await res.json();
-                        updateStatus(data.status === 'success' ? 'Action completed.' : 'Action failed.', data.status !== 'success');
-                        updateResponse(`<p style="color: ${data.status === 'success' ? 'green' : 'red'};">Bot: ${data.message}</p>`);
-                        speakResponse(data.message);
-                    } catch (e) {
-                        updateStatus('Confirmation failed.', true);
-                        updateResponse(`<p style="color: red;">Network Error: Could not confirm modification.</p>`);
-                        console.error('Fetch error:', e);
+    async function listenForClarification(options, clarificationType) {
+        if (clarificationType === 'timeRange') {
+            updateStatus('Please provide a valid time range (e.g., "between 4:00 pm and 6:00 pm").', false);
+            recognition.start();
+    
+            recognition.onresult = async (event) => {
+                const clarificationText = event.results[0][0].transcript;
+                recognition.stop();
+                updateStatus(`Heard: "${clarificationText}"`, false);
+    
+                try {
+                    const res = await fetch('/api/command', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ commandText: `cancel all my meetings ${clarificationText}` })
+                    });
+    
+                    const data = await res.json();
+                    updateStatus(data.status === 'success' ? 'Action completed.' : 'Action failed.', data.status !== 'success');
+                    updateResponse(`<p style="color: ${data.status === 'success' ? 'green' : 'red'};">Bot: ${data.message}</p>`);
+                    speakResponse(data.message);
+                } catch (e) {
+                    updateStatus('Clarification failed.', true);
+                    updateResponse(`<p style="color: red;">Network Error: Could not process clarification.</p>`);
+                    console.error('Fetch error:', e);
+                }
+            };
+        } else {
+            updateStatus('Please specify the event by saying "modify event with ID [ID]".', false);
+            recognition.start();
+    
+            recognition.onresult = async (event) => {
+                const clarificationText = event.results[0][0].transcript;
+                recognition.stop();
+                updateStatus(`Heard: "${clarificationText}"`, false);
+    
+                const idMatch = clarificationText.match(/modify event with ID (\w+)/i);
+                if (idMatch) {
+                    const selectedId = idMatch[1];
+                    const selectedEvent = options.find(option => option.id === selectedId);
+    
+                    if (selectedEvent) {
+                        try {
+                            const res = await fetch('/api/command', {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ commandText: `modify ${selectedEvent.title} with ID ${selectedId}` })
+                            });
+    
+                            const data = await res.json();
+                            updateStatus(data.status === 'success' ? 'Action completed.' : 'Action failed.', data.status !== 'success');
+                            updateResponse(`<p style="color: ${data.status === 'success' ? 'green' : 'red'};">Bot: ${data.message}</p>`);
+                            speakResponse(data.message);
+                        } catch (e) {
+                            updateStatus('Confirmation failed.', true);
+                            updateResponse(`<p style="color: red;">Network Error: Could not confirm modification.</p>`);
+                            console.error('Fetch error:', e);
+                        }
+                    } else {
+                        updateStatus('Invalid event ID.', true);
+                        updateResponse('<p style="color: red;">Bot: Please provide a valid event ID from the list.</p>');
+                        speakResponse('Please provide a valid event ID from the list.');
+                        await listenForClarification(options, clarificationType); // Retry
                     }
                 } else {
-                    updateStatus('Invalid event ID.', true);
-                    updateResponse('<p style="color: red;">Bot: Please provide a valid event ID from the list.</p>');
-                    speakResponse('Please provide a valid event ID from the list.');
-                    await listenForClarification(options); // Retry clarification
+                    updateStatus('Invalid format. Please say "modify event with ID [ID]".', true);
+                    updateResponse('<p style="color: red;">Bot: Invalid format. Please say "modify event with ID [ID]".</p>');
+                    speakResponse('Invalid format. Please say "modify event with ID [ID]".');
+                    await listenForClarification(options, clarificationType); // Retry
                 }
-            } else {
-                updateStatus('Invalid format. Please say "modify event with ID [ID]".', true);
-                updateResponse('<p style="color: red;">Bot: Invalid format. Please say "modify event with ID [ID]".</p>');
-                speakResponse('Invalid format. Please say "modify event with ID [ID]".');
-                await listenForClarification(options); // Retry clarification
-            }
-        };
+            };
+        }
     }
 
     recognition.onspeechend = () => {

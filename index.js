@@ -12,7 +12,8 @@ const {
     createCalendarEvent, 
     queryCalendarEvents,
     modifyCalendarEvent,
-    SCOPES 
+    SCOPES, 
+    deleteCalendarEvents
 } = require('./calendarService');
 
 const app = express();
@@ -57,11 +58,13 @@ app.get('/api/auth/status', (req, res) => {
     res.json({ authenticated: isAuthenticated() });
 });
 
-// Command Processing
+
 app.post('/api/command', async (req, res) => {
     const { commandText } = req.body;
+    console.log('Input command:', commandText);
 
     if (!isAuthenticated()) {
+        console.log('Error: Not authenticated');
         return res.status(401).json({ 
             status: 'error', 
             message: "Authentication required. Please connect your Google Calendar first." 
@@ -69,6 +72,7 @@ app.post('/api/command', async (req, res) => {
     }
 
     if (!commandText) {
+        console.log('Error: No command text received');
         return res.status(400).json({ 
             status: 'error', 
             message: "No voice command text received. Please try speaking again." 
@@ -77,11 +81,14 @@ app.post('/api/command', async (req, res) => {
 
     try {
         const parsedCommand = await parseCommand(commandText);
+        console.log('Parsed command:', JSON.stringify(parsedCommand, null, 2));
+
         let botResponse = {};
 
         if (parsedCommand.intent === 'CREATE_EVENT') {
             const eventDetails = parsedCommand.eventDetails;
             const calendarResult = await createCalendarEvent(eventDetails);
+            console.log('Create event result:', calendarResult);
             botResponse = {
                 status: 'success',
                 message: `Okay, I've scheduled "${calendarResult.title}" starting at ${new Date(calendarResult.start).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.`,
@@ -90,17 +97,20 @@ app.post('/api/command', async (req, res) => {
         } else if (parsedCommand.intent === 'QUERY_EVENTS') {
             const queryDetails = parsedCommand.queryDetails;
             const queryResult = await queryCalendarEvents(queryDetails.targetDate);
+            console.log('Query events result:', queryResult);
             botResponse = {
                 status: 'success',
                 message: queryResult.message,
                 data: queryResult.events
             };
-        } else if (parsedCommand.intent === 'MODIFY_EVENT') {
+        }else if (parsedCommand.intent === 'MODIFY_EVENT') {
             const modifyDetails = parsedCommand.modifyDetails;
+            console.log('Modify event details:', modifyDetails);
             const targetDate = modifyDetails.date || new Date().toISOString().split('T')[0];
             const queryResult = await queryCalendarEvents(targetDate, modifyDetails.eventName);
+            console.log('Query for modify events:', queryResult);
             const matchingEvents = queryResult.events.filter(e => e.title.toLowerCase().includes(modifyDetails.eventName.toLowerCase()));
-
+        
             if (matchingEvents.length === 0) {
                 botResponse = {
                     status: 'error',
@@ -119,35 +129,63 @@ app.post('/api/command', async (req, res) => {
                 if (modifyDetails.endTime) updateDetails.endTime = modifyDetails.endTime;
                 if (modifyDetails.description) updateDetails.description = modifyDetails.description;
                 if (modifyDetails.date) updateDetails.date = modifyDetails.date;
-
-                await modifyCalendarEvent(matchingEvents[0].id, updateDetails);
-                botResponse = {
-                    status: 'success',
-                    message: `Modified '${matchingEvents[0].title}' on ${new Date(targetDate).toDateString()}.`,
-                    data: null
-                };
+        
+                const modifyResult = await modifyCalendarEvent(matchingEvents[0].id, updateDetails);
+                console.log('Modify event result:', modifyResult);
+                if (modifyResult.clarificationNeeded) {
+                    botResponse = {
+                        status: 'clarification',
+                        message: modifyResult.clarificationNeeded.message,
+                        data: { options: modifyResult.clarificationNeeded.options }
+                    };
+                } else if (modifyResult.status === 'success') {
+                    botResponse = {
+                        status: 'success',
+                        message: modifyResult.message,
+                        data: null
+                    };
+                } else {
+                    botResponse = {
+                        status: 'error',
+                        message: `Failed to modify event: ${modifyResult.message || 'Unknown error'}`,
+                        data: null
+                    };
+                }
             }
+        }else if (parsedCommand.intent === 'DELETE_EVENTS') {
+            const deleteDetails = parsedCommand.deleteDetails;
+            console.log('Delete events details:', deleteDetails);
+            const deleteResult = await deleteCalendarEvents(deleteDetails);
+            console.log('Delete events result:', deleteResult);
+            botResponse = {
+                status: deleteResult.clarificationNeeded ? 'clarification' : 'success',
+                message: deleteResult.clarificationNeeded ? deleteResult.clarificationNeeded.message : deleteResult.message,
+                data: deleteResult.clarificationNeeded ? { options: deleteResult.clarificationNeeded.options } : null
+            };
         } else if (parsedCommand.useLocalFallback) {
             botResponse = {
                 status: 'error',
-                message: 'LLM unavailable. Please use phrases like "schedule a meeting today at 3 PM", "what’s on my calendar for tomorrow", or "modify the team meeting to start at 4 PM."',
+                message: 'LLM unavailable. Please use phrases like "schedule a meeting today at 3 PM", "what’s on my calendar for tomorrow", "modify the team meeting to start at 4 PM", or "cancel all my meetings today."',
                 data: null
             };
         } else {
             botResponse = {
                 status: 'error',
-                message: "I didn’t understand that. Try 'schedule a meeting', 'what’s on my calendar', or 'modify the team meeting.'",
+                message: "I didn’t understand that. Try 'schedule a meeting', 'what’s on my calendar', 'modify the team meeting', or 'cancel all my meetings.'",
                 data: parsedCommand
             };
         }
 
+        console.log('Response sent:', botResponse);
         res.json(botResponse);
     } catch (error) {
-        console.error("Command processing failed:", error.message);
+        console.error("Command processing failed:", error.message, error.stack);
         const userMessage = error.message.includes('authenticated')
             ? "Your calendar connection may have expired. Please reconnect."
             : `Error: ${error.message}`;
-        res.status(500).json({ status: 'error', message: userMessage });
+        const errorResponse = { status: 'error', message: userMessage };
+        console.log('Error response:', errorResponse);
+        res.status(500).json(errorResponse);
     }
 });
 
